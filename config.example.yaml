@@ -1,0 +1,28 @@
+# Example configuration for RouteLLM MVP
+backends:
+  - name: openai
+    prefix: openai/
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+    require_api_key: true
+
+  - name: anthropic
+    prefix: anthropic/
+    base_url: https://api.anthropic.com/v1
+    api_key_env: ANTHROPIC_API_KEY
+    require_api_key: true
+
+  - name: ollama
+    prefix: ollama/
+    base_url: http://localhost:11434/v1
+    require_api_key: false
+
+  - name: mock
+    prefix: mock/
+    mock: true
+    require_api_key: false
+
+aliases:
+  cheap: openai/gpt-4o-mini
+  best: anthropic/claude-sonnet-4-5-20250929
+  demo: mock/gpt-4o-mini

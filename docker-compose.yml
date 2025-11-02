@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  controller:
+    build:
+      context: .
+    ports:
+      - "8084:8084"
+    env_file:
+      - .env
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    volumes:
+      - ./config.yaml:/app/config.yaml
+    command: ["python", "-m", "controller.main"]
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8084/health', timeout=2)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY\n"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  intent:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      - INTENT_ONNX_PATH=${INTENT_ONNX_PATH:-/app/intent_onnx/model.onnx}
+      - INTENT_TOKENIZER=${INTENT_TOKENIZER:-distilbert-base-uncased}
+    volumes:
+      - ./intent_onnx:/app/intent_onnx
+    command: ["python", "classifiers/intent/app.py"]
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8000/metrics', timeout=2)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY\n"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  complexity:
+    build:
+      context: .
+    env_file:
+      - .env
+    environment:
+      - COMPLEXITY_ONNX_PATH=${COMPLEXITY_ONNX_PATH:-/app/complexity_onnx/model.onnx}
+    volumes:
+      - ./complexity_onnx:/app/complexity_onnx
+    command: ["python", "classifiers/complexity/app.py"]
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8001/metrics', timeout=2)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY\n"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  guardrails:
+    build:
+      context: .
+    command: ["python", "guardrails/app.py"]
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,json,sys\ntry:\n  req = urllib.request.Request('http://localhost:8002/check', data=json.dumps({\"text\":\"test\"}).encode(), headers={'Content-Type': 'application/json'})\n  urllib.request.urlopen(req, timeout=2)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY\n"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  policy:
+    build:
+      context: .
+    env_file:
+      - .env
+    command: ["python", "policy_engine/app.py"]
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request,sys\ntry:\n  urllib.request.urlopen('http://localhost:8003/metrics', timeout=2)\n  sys.exit(0)\nexcept Exception:\n  sys.exit(1)\nPY\n"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - default
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - default
+
+volumes:
+  prometheus-data:
+  grafana-data:

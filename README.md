@@ -1,0 +1,429 @@
+# RouteLLM - Intelligent LLM Router
+
+> **Automatically route LLM requests to the optimal model based on intent, complexity, and cost**
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-blue.svg)](https://fastapi.tiangolo.com/)
+
+RouteLLM is a production-ready, microservices-based LLM router that automatically selects the best model for each request based on:
+- **Intent classification** (code generation, reasoning, chatbot, etc.)
+- **Complexity estimation** (low, medium, high)
+- **Cost optimization** (free tier models, cost tiers)
+- **Policy-based routing** (A/B testing, bandit algorithms)
+
+## 🚀 Features
+
+### Core Capabilities
+- ✅ **OpenAI-Compatible API** - Drop-in replacement for OpenAI SDK
+- ✅ **Automatic Model Selection** - ML-powered routing based on prompt analysis
+- ✅ **Multi-Provider Support** - OpenAI, Anthropic, OpenRouter, Ollama (local)
+- ✅ **Cost Tracking** - Real-time cost calculation and metrics per model
+- ✅ **Streaming Support** - Server-Sent Events (SSE) for real-time responses
+- ✅ **Microservices Architecture** - Scalable, independent services
+
+### Advanced Features
+- 🤖 **ONNX-Based Classifiers** - Fast, CPU-optimized intent and complexity classification
+- 🛡️ **PII Detection** - Automatic detection of SSNs, emails, phones, credit cards
+- 📊 **Full Observability** - Prometheus metrics + Grafana dashboards
+- 🔄 **Retry Logic** - Exponential backoff for resilience
+- 🎯 **A/B Testing** - Built-in experimentation framework
+- 💰 **Cost Optimization** - Route to cheaper models when appropriate
+
+## 📋 Table of Contents
+
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Usage Examples](#usage-examples)
+- [Docker Setup](#docker-setup)
+- [Observability](#observability)
+- [Development](#development)
+- [Roadmap](#roadmap)
+
+## 🏃 Quick Start
+
+### Option 1: Docker (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/yourorg/routellm-v2.git
+cd routellm-v2
+
+# Create .env file with your API keys
+cat > .env << EOF
+OPENROUTER_API_KEY=sk-or-...
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+EOF
+
+# Start all services
+docker compose up -d
+
+# Test the API
+curl -X POST http://localhost:8084/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "",
+    "messages": [{"role": "user", "content": "Write Python code to parse JSON"}],
+    "extra_body": {"routing_policy": "task_router"}
+  }'
+```
+
+### Option 2: Local Development
+
+```bash
+# Setup virtual environment
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Copy example config
+cp config.example.yaml config.yaml
+
+# Set environment variables
+export OPENROUTER_API_KEY=sk-or-...
+
+# Run controller
+python -m controller.main
+```
+
+**Access Points:**
+- API: http://localhost:8084
+- Playground: http://localhost:8084/playground
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000 (admin/admin)
+
+## 🏗️ Architecture
+
+RouteLLM uses a microservices architecture:
+
+```
+┌─────────────────────────────────────────┐
+│        Controller (Port 8084)           │
+│     OpenAI-Compatible API Gateway        │
+└──────────────┬──────────────────────────┘
+               │
+    ┌──────────┴──────────┐
+    │                     │
+┌───▼──────┐      ┌───────▼────────┐
+│  Intent  │      │   Complexity   │
+│ (Port    │      │   (Port 8001)  │
+│  8000)   │      │                │
+└───┬──────┘      └───────┬────────┘
+    │                     │
+    └──────────┬──────────┘
+               │
+    ┌──────────▼──────────┐
+    │    Guardrails       │
+    │    (Port 8002)      │
+    │  PII Detection      │
+    └──────────┬──────────┘
+               │
+    ┌──────────▼──────────┐
+    │   Policy Engine     │
+    │   (Port 8003)       │
+    │  Model Selection    │
+    └──────────┬──────────┘
+               │
+    ┌──────────▼──────────┐
+    │   LLM Backends      │
+    │ (OpenRouter, etc.)  │
+    └─────────────────────┘
+```
+
+### Services
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| **Controller** | 8084 | Main API orchestrator |
+| **Intent Classifier** | 8000 | Classifies prompt intent (ONNX/heuristic) |
+| **Complexity Estimator** | 8001 | Estimates prompt complexity (ONNX/heuristic) |
+| **Guardrails** | 8002 | PII detection and safety checks |
+| **Policy Engine** | 8003 | Makes final routing decisions |
+| **Prometheus** | 9090 | Metrics aggregation |
+| **Grafana** | 3000 | Visualization dashboards |
+
+## ⚙️ Configuration
+
+### Basic Config (`config.yaml`)
+
+```yaml
+backends:
+  - name: openrouter
+    prefix: openrouter/
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+    require_api_key: true
+
+routing_rules:
+  task_router:
+    code_generation: openrouter/qwen/qwen3-coder:free
+    chatbot: openrouter/google/gemma-3-27b-it:free
+
+pipeline:
+  intent_classifier: http://intent:8000/classify
+  complexity_estimator: http://complexity:8001/classify
+  guardrails: http://guardrails:8002/check
+  policy_engine: http://policy:8003/decide
+```
+
+### Environment Variables (`.env`)
+
+```bash
+# API Keys
+OPENROUTER_API_KEY=sk-or-...
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# ONNX Models (optional - falls back to heuristics)
+INTENT_ONNX_PATH=/app/intent_onnx/model.onnx
+INTENT_TOKENIZER=distilbert-base-uncased
+COMPLEXITY_ONNX_PATH=/app/complexity_onnx/model.onnx
+```
+
+See `config.example.yaml` for full configuration options.
+
+## 💡 Usage Examples
+
+### 1. Prefix-Based Routing (Manual)
+
+```bash
+curl -X POST http://localhost:8084/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "openrouter/qwen/qwen3-coder:free",
+    "messages": [{"role": "user", "content": "Write Python code"}]
+  }'
+```
+
+### 2. Auto-Routing (Policy-Based)
+
+```bash
+curl -X POST http://localhost:8084/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "",
+    "messages": [{"role": "user", "content": "Write Python code to parse JSON"}],
+    "extra_body": {"routing_policy": "task_router"}
+  }'
+```
+
+**Response includes `routing_explain`:**
+```json
+{
+  "choices": [...],
+  "routing_explain": {
+    "source": "pipeline",
+    "pipeline": {
+      "intent": {"label": "code_generation", "confidence": 0.98},
+      "complexity": {"level": "low", "confidence": 0.7},
+      "guardrails": {"passed": true},
+      "policy": {"chosen": "openrouter/qwen/qwen3-coder:free"}
+    },
+    "cost": {
+      "total_cost_usd": 0.0,
+      "prompt_tokens": 15,
+      "completion_tokens": 200
+    }
+  }
+}
+```
+
+### 3. Python Client
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:8084/v1",
+    api_key="dummy"  # Not required for local
+)
+
+# Auto-routing
+response = client.chat.completions.create(
+    model="",  # Empty for auto-route
+    messages=[{"role": "user", "content": "Write Python code"}],
+    extra_body={"routing_policy": "task_router"}
+)
+
+print(response.choices[0].message.content)
+print(response.routing_explain)  # See routing decision
+```
+
+### 4. Streaming
+
+```bash
+curl -X POST http://localhost:8084/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "",
+    "messages": [{"role": "user", "content": "Tell me a story"}],
+    "stream": true,
+    "extra_body": {"routing_policy": "task_router"}
+  }'
+```
+
+## 🐳 Docker Setup
+
+### Quick Start
+
+```bash
+# Start all services
+docker compose up -d
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+```
+
+### Services Included
+
+- **Controller** - Main API (port 8084)
+- **Intent Classifier** - ONNX/heuristic intent detection (port 8000)
+- **Complexity Estimator** - ONNX/heuristic complexity detection (port 8001)
+- **Guardrails** - PII detection (port 8002)
+- **Policy Engine** - Model selection (port 8003)
+- **Prometheus** - Metrics (port 9090)
+- **Grafana** - Dashboards (port 3000)
+
+### Makefile Commands
+
+```bash
+make docker-up      # Start all services
+make docker-down    # Stop all services
+make docker-ps      # Check status
+make docker-logs     # View logs
+make docker-test    # Run test requests
+```
+
+## 📊 Observability
+
+### Prometheus Metrics
+
+Access Prometheus at http://localhost:9090
+
+**Key Metrics:**
+- `orchestrator_requests_total` - Total API requests
+- `orchestrator_cost_total{provider, model}` - Cost tracking
+- `orchestrator_tokens_total{type, provider, model}` - Token usage
+- `intent_requests_total` - Intent classification requests
+- `guardrails_blocked_total{reason}` - PII detections
+
+### Grafana Dashboards
+
+Access Grafana at http://localhost:3000 (admin/admin)
+
+**Setup:**
+1. Configure Prometheus data source: `http://prometheus:9090`
+2. Import dashboard from `monitoring/grafana-dashboard.json`
+3. View real-time metrics and cost breakdowns
+
+See `monitoring/README.md` for detailed setup instructions.
+
+## 🛠️ Development
+
+### Setup
+
+```bash
+# Install dependencies
+make setup
+
+# Run tests
+make test
+
+# Run locally (single process)
+make run
+```
+
+### Project Structure
+
+```
+routellm-v2/
+├── controller/          # Main orchestrator
+├── classifiers/         # Intent & complexity services
+├── guardrails/          # PII detection
+├── policy_engine/       # Routing decisions
+├── monitoring/          # Prometheus & Grafana configs
+└── tests/              # Test suite
+```
+
+See `project structure.md` for detailed architecture.
+
+### Running Individual Services
+
+```bash
+# Controller
+python -m controller.main
+
+# Intent Classifier
+python classifiers/intent/app.py
+
+# Complexity Estimator
+python classifiers/complexity/app.py
+
+# Guardrails
+python guardrails/app.py
+
+# Policy Engine
+python policy_engine/app.py
+```
+
+## 🗺️ Roadmap
+
+### Completed ✅
+- [x] Microservices architecture
+- [x] ONNX-based intent/complexity classification
+- [x] PII detection in guardrails
+- [x] Cost tracking and metrics
+- [x] Streaming support
+- [x] Retry logic with exponential backoff
+- [x] Prometheus + Grafana observability
+
+### In Progress 🚧
+- [ ] End-to-end tests
+- [ ] Bandit persistence (Redis)
+- [ ] Cost savings analysis dashboard
+
+### Planned 📋
+- [ ] Redis caching layer
+- [ ] Multiple routing strategies (embedding, LLM-as-judge)
+- [ ] Model catalog API
+- [ ] Custom router training
+- [ ] Rate limiting per user/API key
+- [ ] Webhook support
+
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests
+5. Submit a pull request
+
+## 📝 License
+
+Apache 2.0 License - see LICENSE file for details
+
+## 🙏 Acknowledgments
+
+Built with:
+- [FastAPI](https://fastapi.tiangolo.com/) - Web framework
+- [ONNX Runtime](https://onnxruntime.ai/) - ML inference
+- [Prometheus](https://prometheus.io/) - Metrics
+- [Grafana](https://grafana.com/) - Visualization
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourorg/routellm-v2/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourorg/routellm-v2/discussions)
+
+---
+
+**Made with ❤️ for the LLM community**

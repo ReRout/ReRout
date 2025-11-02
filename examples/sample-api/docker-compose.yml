@@ -1,0 +1,16 @@
+services:
+  sample-api:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["python", "examples/sample-api/app.py"]
+    ports:
+      - "9000:9000"
+    environment:
+      - ROUTELLM_URL=http://controller:8084
+      - PORT=9000
+    networks:
+      - default
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+

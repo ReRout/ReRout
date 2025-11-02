@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'controller'
+    static_configs:
+      - targets: ['controller:8084']
+  
+  - job_name: 'intent-classifier'
+    static_configs:
+      - targets: ['intent:8000']
+  
+  - job_name: 'complexity-classifier'
+    static_configs:
+      - targets: ['complexity:8001']
+  
+  - job_name: 'guardrails'
+    static_configs:
+      - targets: ['guardrails:8002']
+  
+  - job_name: 'policy-engine'
+    static_configs:
+      - targets: ['policy:8003']
+

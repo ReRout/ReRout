@@ -1,0 +1,141 @@
+{
+  "dashboard": {
+    "title": "RouteLLM Metrics Dashboard",
+    "tags": ["routellm", "llm-router"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Total Requests (Controller)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "orchestrator_requests_total",
+            "legendFormat": "Total Requests"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Request Errors (Controller)",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [
+          {
+            "expr": "orchestrator_request_errors_total",
+            "legendFormat": "Errors"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "green"},
+                {"value": 1, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "Request Latency (p95)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 4},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, orchestrator_request_latency_seconds_bucket)",
+            "legendFormat": "p95 Latency"
+          },
+          {
+            "expr": "histogram_quantile(0.50, orchestrator_request_latency_seconds_bucket)",
+            "legendFormat": "p50 Latency"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Latency"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Intent Classification Requests",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 6, "x": 0, "y": 10},
+        "targets": [
+          {
+            "expr": "rate(intent_requests_total[5m])",
+            "legendFormat": "Intent Requests/sec"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Complexity Classification Requests",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 6, "x": 6, "y": 10},
+        "targets": [
+          {
+            "expr": "rate(complexity_requests_total[5m])",
+            "legendFormat": "Complexity Requests/sec"
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Policy Decisions",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "rate(policy_requests_total[5m])",
+            "legendFormat": "Policy Decisions/sec"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Request Rate (All Services)",
+        "type": "graph",
+        "gridPos": {"h": 6, "w": 12, "x": 0, "y": 22},
+        "targets": [
+          {
+            "expr": "rate(orchestrator_requests_total[5m])",
+            "legendFormat": "Controller"
+          },
+          {
+            "expr": "rate(intent_requests_total[5m])",
+            "legendFormat": "Intent"
+          },
+          {
+            "expr": "rate(complexity_requests_total[5m])",
+            "legendFormat": "Complexity"
+          },
+          {
+            "expr": "rate(policy_requests_total[5m])",
+            "legendFormat": "Policy"
+          }
+        ],
+        "legend": {"show": true, "values": true}
+      }
+    ]
+  }
+}
+

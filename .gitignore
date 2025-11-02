@@ -1,0 +1,49 @@
+# Environment variables
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+/tmp/
+nohup.out
+
+# Model files (can be large)
+*.onnx
+intent_onnx/
+complexity_onnx/
+
+# Project specific
+strategy to beat competitors.md
+product development roadmap.md
+additional_tasks.txt
+
+# Docker
+docker-compose.override.yml
+
