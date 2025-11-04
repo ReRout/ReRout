@@ -29,6 +29,8 @@ RouteLLM is a production-ready, microservices-based LLM router that automaticall
 - 🔄 **Retry Logic** - Exponential backoff for resilience
 - 🎯 **A/B Testing** - Built-in experimentation framework
 - 💰 **Cost Optimization** - Route to cheaper models when appropriate
+- 🧠 **Token-Based Memory** - Conversation context management with automatic pruning
+- 🎮 **Interactive Playground** - Web UI with memory stats, conversation history, and real-time testing
 
 ## 📋 Table of Contents
 
@@ -90,9 +92,10 @@ python -m controller.main
 
 **Access Points:**
 - API: http://localhost:8084
-- Playground: http://localhost:8084/playground
+- **Playground**: http://localhost:8084/playground (Interactive UI with memory stats)
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000 (admin/admin)
+- Redis: localhost:6379 (if using Redis backend for memory)
 
 ## 🏗️ Architecture
 
@@ -177,10 +180,42 @@ OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
 
 # ONNX Models (optional - falls back to heuristics)
+# For Docker: use /app/intent_onnx/model.onnx
+# For local: use absolute path to your model files
 INTENT_ONNX_PATH=/app/intent_onnx/model.onnx
 INTENT_TOKENIZER=distilbert-base-uncased
 COMPLEXITY_ONNX_PATH=/app/complexity_onnx/model.onnx
 ```
+
+### Memory Management
+
+RouteLLM includes token-based conversation memory to maintain context across requests:
+
+```yaml
+memory:
+  enabled: true  # Enable memory management
+  max_tokens_per_conversation: 4000  # Max tokens per conversation
+  max_total_tokens: 100000  # Max total tokens across all conversations
+  pruning_strategy: "fifo"  # "fifo", "lifo", or "importance"
+  storage_backend: "memory"  # "memory" (in-memory) or "redis" (persistent)
+  redis_url: "redis://localhost:6379"  # Redis URL if using redis backend
+```
+
+**Usage in requests:**
+```json
+{
+  "model": "",
+  "messages": [{"role": "user", "content": "My name is Alice"}],
+  "extra_body": {
+    "routing_policy": "task_router",
+    "use_memory": true,
+    "user_id": "user123",
+    "conversation_id": "conv-abc123"  // Optional: auto-generated if not provided
+  }
+}
+```
+
+See `examples/memory_usage.md` for detailed memory management documentation.
 
 See `config.example.yaml` for full configuration options.
 
@@ -289,6 +324,7 @@ docker compose down
 - **Complexity Estimator** - ONNX/heuristic complexity detection (port 8001)
 - **Guardrails** - PII detection (port 8002)
 - **Policy Engine** - Model selection (port 8003)
+- **Redis** - Memory storage backend (port 6379) - optional
 - **Prometheus** - Metrics (port 9090)
 - **Grafana** - Dashboards (port 3000)
 
@@ -384,6 +420,9 @@ python policy_engine/app.py
 - [x] Streaming support
 - [x] Retry logic with exponential backoff
 - [x] Prometheus + Grafana observability
+- [x] Token-based conversation memory
+- [x] Interactive web playground with memory stats
+- [x] Docker Compose with health checks and dependencies
 
 ### In Progress 🚧
 - [ ] End-to-end tests

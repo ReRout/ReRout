@@ -51,3 +51,12 @@ pipeline:
   complexity_estimator: http://complexity:8001/classify
   guardrails: http://guardrails:8002/check
   policy_engine: http://policy:8003/decide
+
+# Memory management configuration
+memory:
+  enabled: true  # Enable token-based memory stacking
+  max_tokens_per_conversation: 4000  # Maximum tokens per conversation
+  max_total_tokens: 100000  # Maximum total tokens across all conversations
+  pruning_strategy: "fifo"  # "fifo" (oldest first), "lifo" (newest first), "importance" (keep user messages)
+  storage_backend: "memory"  # "memory" (in-memory) or "redis" (persistent)
+  redis_url: "redis://localhost:6379"  # Redis URL if using redis backend

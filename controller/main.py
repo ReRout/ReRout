@@ -16,6 +16,7 @@ from .backends import call_backend_chat_completions, stream_backend_chat_complet
 from .config import ConfigError, load_config
 from .router import parse_model, resolve_alias
 from .cost_tracker import estimate_cost_from_response
+from .memory_manager import TokenStackMemory
 
 
 # Load .env (if present)
@@ -48,6 +49,36 @@ except ConfigError as e:
 else:
     CONFIG_LOAD_ERROR = None
 
+# Initialize memory manager
+MEMORY_MANAGER: Optional[TokenStackMemory] = None
+try:
+    memory_config = (CONFIG.raw or {}).get("memory", {}) if CONFIG else {}
+    if memory_config.get("enabled", False):
+        # Try to initialize Redis if configured
+        redis_client = None
+        if memory_config.get("storage_backend") == "redis":
+            try:
+                import redis as redis_lib
+                redis_url = memory_config.get("redis_url", "redis://localhost:6379")
+                redis_client = redis_lib.from_url(redis_url, decode_responses=True)
+                logger.info({"event": "redis_connected", "url": redis_url})
+            except Exception as e:
+                logger.warning({"event": "redis_connection_failed", "error": str(e), "fallback": "memory"})
+        
+        MEMORY_MANAGER = TokenStackMemory(
+            max_tokens_per_conversation=memory_config.get("max_tokens_per_conversation", 4000),
+            max_total_tokens=memory_config.get("max_total_tokens", 100000),
+            pruning_strategy=memory_config.get("pruning_strategy", "fifo"),
+            storage_backend=memory_config.get("storage_backend", "memory"),
+            redis_client=redis_client
+        )
+        logger.info({"event": "memory_manager_initialized", "enabled": True})
+    else:
+        logger.info({"event": "memory_manager_disabled"})
+except Exception as e:
+    logger.error({"event": "memory_manager_init_failed", "error": str(e)})
+    MEMORY_MANAGER = None
+
 
 class Message(BaseModel):
     role: str
@@ -73,47 +104,220 @@ async def playground() -> str:
   <meta name='viewport' content='width=device-width, initial-scale=1' />
   <title>RouteLLM Playground</title>
   <style>
-    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 24px; }
-    textarea, input, button { font-size: 14px; }
-    textarea { width: 100%; height: 140px; }
-    pre { background: #0b1220; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow: auto; }
-    .row { display: flex; gap: 8px; align-items: center; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 24px; background: #f9fafb; }
+    .container { max-width: 1200px; margin: 0 auto; background: white; padding: 24px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    h2 { margin-top: 0; color: #1f2937; }
+    textarea, input, button, select { font-size: 14px; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; }
+    textarea { width: 100%; height: 140px; font-family: monospace; }
+    input[type="text"] { width: 300px; }
+    input[type="checkbox"] { margin-right: 4px; }
+    button { background: #3b82f6; color: white; border: none; padding: 10px 20px; cursor: pointer; font-weight: 500; }
+    button:hover { background: #2563eb; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    pre { background: #0b1220; color: #e5e7eb; padding: 12px; border-radius: 8px; overflow: auto; max-height: 500px; font-size: 12px; }
+    .row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+    .section { margin-bottom: 24px; padding: 16px; background: #f9fafb; border-radius: 8px; }
+    .section h3 { margin-top: 0; color: #374151; font-size: 16px; }
+    label { font-weight: 500; color: #374151; }
+    .memory-info { background: #dbeafe; padding: 12px; border-radius: 6px; margin-top: 12px; font-size: 13px; }
+    .memory-info strong { color: #1e40af; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
+    .stat-card { background: white; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb; }
+    .stat-label { font-size: 12px; color: #6b7280; }
+    .stat-value { font-size: 20px; font-weight: 600; color: #1f2937; }
   </style>
 </head>
 <body>
-  <h2>RouteLLM Playground</h2>
-  <p>Leave model empty to auto-route via policy pipeline. Or specify a model like <code>openrouter/google/gemini-2.0-flash-exp:free</code>.</p>
-  <div class='row'>
-    <label for='model'>Model:</label>
-    <input id='model' placeholder='(empty for auto-route)' style='width: 360px;' />
-    <label><input type='checkbox' id='usePolicy' checked /> use routing_policy=task_router</label>
+  <div class="container">
+    <h2>🚀 RouteLLM Playground</h2>
+    <p>Test automatic model routing and memory features. Leave model empty to auto-route via policy pipeline.</p>
+    
+    <div class="section">
+      <h3>Configuration</h3>
+      <div class="row">
+        <label for='model'>Model:</label>
+        <input id='model' placeholder='(empty for auto-route)' style='width: 360px;' />
+        <label><input type='checkbox' id='usePolicy' checked /> Auto-routing</label>
+      </div>
+      
+      <div class="row">
+        <label><input type='checkbox' id='useMemory' /> Enable Memory</label>
+        <label for='userId'>User ID:</label>
+        <input id='userId' placeholder='user123' style='width: 150px;' />
+        <label for='conversationId'>Conversation ID:</label>
+        <input id='conversationId' placeholder='(auto-generated)' style='width: 150px;' />
+      </div>
+    </div>
+
+    <div class="section">
+      <h3>Chat</h3>
+      <textarea id='prompt' placeholder='Type your prompt here...'>My name is Alice. I am a software engineer.</textarea>
+      <div class="row" style="margin-top: 12px;">
+        <button id='send'>Send</button>
+        <button id='clearChat' style="background: #ef4444;">Clear Chat</button>
+        <button id='refreshStats' style="background: #6b7280;">Refresh Memory Stats</button>
+      </div>
+    </div>
+
+    <div class="section" id="memorySection" style="display: none;">
+      <h3>📊 Memory Statistics</h3>
+      <div id="memoryStats" class="memory-info">Loading...</div>
+    </div>
+
+    <div class="section">
+      <h3>Response</h3>
+      <pre id='out'>Ready to test...</pre>
+    </div>
   </div>
-  <p>
-    <textarea id='prompt' placeholder='Type your prompt here...'>Write Python code to parse JSON</textarea>
-  </p>
-  <button id='send'>Send</button>
-  <h3>Response</h3>
-  <pre id='out'></pre>
+
   <script>
     const out = document.getElementById('out');
+    const memorySection = document.getElementById('memorySection');
+    const memoryStats = document.getElementById('memoryStats');
+    let conversationId = null;
+
+    // Load memory stats on page load
+    async function loadMemoryStats() {
+      try {
+        const res = await fetch('/memory/stats');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.storage_backend) {
+            memorySection.style.display = 'block';
+            memoryStats.innerHTML = `
+              <div class="stats">
+                <div class="stat-card">
+                  <div class="stat-label">Conversations</div>
+                  <div class="stat-value">${data.total_conversations || 0}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-label">Total Tokens</div>
+                  <div class="stat-value">${data.total_tokens || 0}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-label">Max per Conv</div>
+                  <div class="stat-value">${data.max_tokens_per_conversation || 0}</div>
+                </div>
+                <div class="stat-card">
+                  <div class="stat-label">Strategy</div>
+                  <div class="stat-value" style="font-size: 14px;">${data.pruning_strategy || 'N/A'}</div>
+                </div>
+              </div>
+              ${data.conversations && data.conversations.length > 0 ? 
+                '<div style="margin-top: 12px;"><strong>Conversations:</strong><ul style="margin: 8px 0; padding-left: 20px;">' + 
+                data.conversations.map(c => `<li>${c.id}: ${c.tokens} tokens, ${c.entries} entries</li>`).join('') + 
+                '</ul></div>' : ''}
+            `;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to load memory stats:', e);
+      }
+    }
+
+    // Check memory status
+    async function checkMemoryStatus() {
+      try {
+        const res = await fetch('/health');
+        const data = await res.json();
+        if (data.memory && data.memory.enabled) {
+          memorySection.style.display = 'block';
+          loadMemoryStats();
+        } else {
+          memorySection.style.display = 'none';
+        }
+      } catch (e) {
+        console.error('Failed to check memory status:', e);
+      }
+    }
+
+    document.getElementById('refreshStats').onclick = loadMemoryStats;
     document.getElementById('send').onclick = async () => {
+      const sendBtn = document.getElementById('send');
+      sendBtn.disabled = true;
       out.textContent = 'Loading...';
+      
       const model = (document.getElementById('model').value || '').trim();
       const usePolicy = document.getElementById('usePolicy').checked;
+      const useMemory = document.getElementById('useMemory').checked;
+      const userId = document.getElementById('userId').value.trim();
+      const convId = document.getElementById('conversationId').value.trim() || conversationId;
+      
       const body = {
         model: model,
         messages: [{ role: 'user', content: document.getElementById('prompt').value }]
       };
+      
+      body.extra_body = {};
       if (!model && usePolicy) {
-        body.extra_body = { routing_policy: 'task_router' };
+        body.extra_body.routing_policy = 'task_router';
       }
+      if (useMemory) {
+        body.extra_body.use_memory = true;
+        if (userId) body.extra_body.user_id = userId;
+        if (convId) {
+          body.extra_body.conversation_id = convId;
+          conversationId = convId;
+        }
+      }
+      
       try {
-        const res = await fetch('/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const res = await fetch('/v1/chat/completions', { 
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify(body) 
+        });
         const text = await res.text();
-        try { out.textContent = JSON.stringify(JSON.parse(text), null, 2); }
-        catch { out.textContent = text; }
+        try { 
+          const json = JSON.parse(text);
+          out.textContent = JSON.stringify(json, null, 2);
+          
+          // Show response content if available
+          if (json.choices && json.choices[0] && json.choices[0].message) {
+            const content = json.choices[0].message.content;
+            console.log('Response:', content);
+          }
+          
+          // Refresh memory stats if memory is enabled
+          if (useMemory) {
+            setTimeout(loadMemoryStats, 500);
+          }
+        } catch { 
+          out.textContent = text; 
+        }
       } catch (e) {
-        out.textContent = String(e);
+        out.textContent = 'Error: ' + String(e);
+      } finally {
+        sendBtn.disabled = false;
+      }
+    };
+
+    document.getElementById('clearChat').onclick = () => {
+      out.textContent = 'Ready to test...';
+      document.getElementById('prompt').value = '';
+      if (conversationId) {
+        fetch('/memory/clear', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation_id: conversationId })
+        }).then(() => {
+          conversationId = null;
+          loadMemoryStats();
+        });
+      }
+    };
+
+    // Initialize
+    checkMemoryStatus();
+    if (document.getElementById('useMemory').checked) {
+      loadMemoryStats();
+    }
+    
+    document.getElementById('useMemory').onchange = (e) => {
+      if (e.target.checked) {
+        checkMemoryStatus();
+      } else {
+        memorySection.style.display = 'none';
       }
     };
   </script>
@@ -129,10 +333,45 @@ async def metrics() -> Response:
 
 @app.get("/health")
 async def health() -> Dict[str, Any]:
+    memory_stats = None
+    if MEMORY_MANAGER:
+        try:
+            memory_stats = MEMORY_MANAGER.get_memory_stats()
+        except Exception as e:
+            logger.warning({"event": "memory_stats_failed", "error": str(e)})
+    
     return {
         "status": "ok" if CONFIG and not CONFIG_LOAD_ERROR else "degraded",
         "config_error": CONFIG_LOAD_ERROR,
+        "memory": {
+            "enabled": MEMORY_MANAGER is not None,
+            "stats": memory_stats
+        } if memory_stats else {"enabled": MEMORY_MANAGER is not None}
     }
+
+
+@app.post("/memory/clear")
+async def clear_memory(
+    conversation_id: str,
+    authorization: Optional[str] = Header(default=None)
+) -> Dict[str, Any]:
+    """Clear memory for a specific conversation"""
+    if not MEMORY_MANAGER:
+        raise HTTPException(400, detail="Memory management is not enabled")
+    
+    MEMORY_MANAGER.clear_memory(conversation_id)
+    return {"status": "cleared", "conversation_id": conversation_id}
+
+
+@app.get("/memory/stats")
+async def get_memory_stats(
+    authorization: Optional[str] = Header(default=None)
+) -> Dict[str, Any]:
+    """Get memory statistics"""
+    if not MEMORY_MANAGER:
+        raise HTTPException(400, detail="Memory management is not enabled")
+    
+    return MEMORY_MANAGER.get_memory_stats()
 
 
 async def run_pipeline(
@@ -257,9 +496,34 @@ async def chat_completions(
         if not backend:
             raise HTTPException(404, detail=f"Provider '{provider}' not found")
 
+        # Handle memory management
+        messages_for_api = [m.model_dump() for m in request.messages]
+        memory_enabled = False
+        user_id = None
+        conversation_id = None
+        
+        if request.extra_body and isinstance(request.extra_body, dict):
+            memory_enabled = request.extra_body.get("use_memory", False)
+            user_id = request.extra_body.get("user_id")
+            conversation_id = request.extra_body.get("conversation_id")
+        
+        # If memory is enabled, get memory context
+        if MEMORY_MANAGER and memory_enabled:
+            messages_for_api = MEMORY_MANAGER.get_memory(
+                messages=messages_for_api,
+                user_id=user_id,
+                conversation_id=conversation_id
+            )
+            logger.info({
+                "event": "memory_retrieved",
+                "conversation_id": conversation_id or "auto",
+                "messages_count": len(messages_for_api),
+                "original_messages_count": len(request.messages)
+            })
+
         body: Dict[str, Any] = {
             "model": model_name,
-            "messages": [m.model_dump() for m in request.messages],
+            "messages": messages_for_api,
             "temperature": request.temperature,
             "max_tokens": request.max_tokens,
             "stream": request.stream,
@@ -303,6 +567,26 @@ async def chat_completions(
             raise HTTPException(status_code=response.status_code, detail=payload)
 
         result = response.json()
+        
+        # Add to memory if enabled
+        if MEMORY_MANAGER and memory_enabled:
+            try:
+                MEMORY_MANAGER.add_to_memory(
+                    messages=[m.model_dump() for m in request.messages],
+                    response=result,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    metadata={
+                        "model": resolved_model,
+                        "routing_source": routing_explain.get("source") if routing_explain else "manual"
+                    }
+                )
+                logger.info({
+                    "event": "memory_updated",
+                    "conversation_id": conversation_id or "auto"
+                })
+            except Exception as e:
+                logger.warning({"event": "memory_update_failed", "error": str(e)})
         
         # Calculate and track cost
         cost_info: Optional[Dict[str, Any]] = None
