@@ -1,12 +1,10 @@
-This is the [assistant-ui](https://github.com/Yonom/assistant-ui) starter project.
+This is the [assistant-ui](https://github.com/Yonom/assistant-ui) starter project integrated with RouteLLM.
 
 ## Getting Started
 
-First, add your OpenAI API key to `.env.local` file:
+This chat UI is configured to use the local RouteLLM backend running on `http://localhost:8084`. Make sure your RouteLLM backend is running before starting the chat UI.
 
-```
-OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
+No API keys are required for local development - the backend handles routing automatically.
 
 Then, run the development server:
 
@@ -20,6 +18,6 @@ pnpm dev
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:4000](http://localhost:4000) with your browser to see the result.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
