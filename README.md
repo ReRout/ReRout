@@ -31,6 +31,7 @@ RouteLLM is a production-ready, microservices-based LLM router that automaticall
 - 💰 **Cost Optimization** - Route to cheaper models when appropriate
 - 🧠 **Token-Based Memory** - Conversation context management with automatic pruning
 - 🎮 **Interactive Playground** - Web UI with memory stats, conversation history, and real-time testing
+- 💬 **Chat UI Integration** - Production-ready chat interface using [assistant-ui](https://github.com/assistant-ui/assistant-ui) with automatic routing
 
 ## 📋 Table of Contents
 
@@ -38,6 +39,7 @@ RouteLLM is a production-ready, microservices-based LLM router that automaticall
 - [Architecture](#architecture)
 - [Configuration](#configuration)
 - [Usage Examples](#usage-examples)
+- [Chat UI](#chat-ui)
 - [Docker Setup](#docker-setup)
 - [Observability](#observability)
 - [Development](#development)
@@ -93,6 +95,7 @@ python -m controller.main
 **Access Points:**
 - API: http://localhost:8084
 - **Playground**: http://localhost:8084/playground (Interactive UI with memory stats)
+- **Chat UI**: http://localhost:4000 (assistant-ui chat interface - see [Chat UI](#chat-ui) section)
 - Prometheus: http://localhost:9090
 - Grafana: http://localhost:3000 (admin/admin)
 - Redis: localhost:6379 (if using Redis backend for memory)
@@ -298,6 +301,86 @@ curl -X POST http://localhost:8084/v1/chat/completions \
     "extra_body": {"routing_policy": "task_router"}
   }'
 ```
+
+## 💬 Chat UI
+
+RouteLLM includes a production-ready chat interface built with [assistant-ui](https://github.com/assistant-ui/assistant-ui), providing a ChatGPT-like experience with automatic model routing.
+
+### Features
+
+- 🎨 **Modern UI** - Beautiful, customizable chat interface inspired by ChatGPT
+- 🚀 **Streaming Support** - Real-time streaming responses
+- 🧵 **Thread Management** - Multiple conversation threads with sidebar navigation
+- 🎯 **Auto-Routing** - Automatically routes requests to optimal models based on intent
+- ♿ **Accessible** - Built-in keyboard shortcuts and accessibility features
+- 📝 **Markdown Support** - Rich markdown rendering with code highlighting
+
+### Setup
+
+1. **Navigate to the chat UI directory:**
+   ```bash
+   cd chat-ui
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   npm install
+   # or
+   pnpm install
+   # or
+   yarn install
+   ```
+
+3. **Start the development server:**
+   ```bash
+   npm run dev
+   # or
+   pnpm dev
+   # or
+   yarn dev
+   ```
+
+4. **Open your browser:**
+   Navigate to `http://localhost:4000` (or the port shown in your terminal)
+
+### Configuration
+
+The chat UI is pre-configured to connect to your RouteLLM backend at `http://localhost:8084`. The configuration is in `chat-ui/app/api/chat/route.ts`:
+
+```typescript
+model: openai("", {
+  baseURL: "http://localhost:8084/v1",
+  apiKey: "dummy", // Not required for local backend
+}),
+extraBody: {
+  routing_policy: "task_router", // Auto-routing policy
+}
+```
+
+### How It Works
+
+1. **User sends a message** → Chat UI sends request to RouteLLM backend
+2. **RouteLLM analyzes** → Intent classification, complexity estimation, guardrails
+3. **Model selection** → Policy engine selects optimal model based on routing rules
+4. **Response streaming** → Selected model generates response with real-time streaming
+5. **Display** → Chat UI renders the response with markdown support
+
+### Customization
+
+The chat UI uses [assistant-ui](https://www.assistant-ui.com/), which provides composable primitives for complete customization:
+
+- **Styling**: Modify components in `chat-ui/components/assistant-ui/`
+- **Routing Policy**: Change `routing_policy` in `route.ts` to use different routing strategies
+- **Backend URL**: Update `baseURL` if your RouteLLM backend runs on a different port
+- **Model Selection**: Modify the model name or use specific models instead of auto-routing
+
+### Requirements
+
+- **RouteLLM Backend**: Must be running on `http://localhost:8084` (or update the `baseURL` in `route.ts`)
+- **Node.js**: Version 18+ recommended
+- **No API Keys Required**: The chat UI connects to your local backend, so no external API keys are needed
+
+For more details, see the [chat-ui README](chat-ui/README.md).
 
 ## 🐳 Docker Setup
 
