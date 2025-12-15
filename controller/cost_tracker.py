@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import Dict, Any, Optional
 
-# Model pricing (per 1M tokens) - approximate pricing as of 2024
+# Model pricing (per 1M tokens) - approximate pricing as of December 2025
 # Format: "provider/model": {"input": price_per_1M_input_tokens, "output": price_per_1M_output_tokens}
 MODEL_PRICING: Dict[str, Dict[str, float]] = {
-    # OpenAI models (approximate)
-    "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},  # $0.15/$0.60 per 1M tokens
+    # OpenAI models
+    "openai/gpt-5.2-pro": {"input": 21.00, "output": 168.00},  # Premium model for comparison
+    "openai/gpt-5.2": {"input": 1.75, "output": 14.00},
+    "openai/gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "openai/gpt-4o": {"input": 2.50, "output": 10.00},
     "openai/gpt-4": {"input": 30.00, "output": 60.00},
     "openai/gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
@@ -86,4 +88,61 @@ def estimate_cost_from_response(response: Dict[str, Any], provider_model: str) -
     completion_tokens = usage.get("completion_tokens", 0)
     
     return calculate_cost(provider_model, prompt_tokens, completion_tokens)
+
+
+# GPT-5.2 Pro pricing for comparison baseline
+GPT_5_2_PRO_PRICING = {"input": 21.00, "output": 168.00}
+
+
+def calculate_comparison_cost(
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> Dict[str, Any]:
+    """Calculate what GPT-5.2 Pro would have cost for the same tokens."""
+    input_cost = (prompt_tokens / 1_000_000) * GPT_5_2_PRO_PRICING["input"]
+    output_cost = (completion_tokens / 1_000_000) * GPT_5_2_PRO_PRICING["output"]
+    total_cost = input_cost + output_cost
+    
+    return {
+        "model": "openai/gpt-5.2-pro",
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+        "input_cost": round(input_cost, 6),
+        "output_cost": round(output_cost, 6),
+        "total_cost": round(total_cost, 6),
+        "input_price_per_1M": GPT_5_2_PRO_PRICING["input"],
+        "output_price_per_1M": GPT_5_2_PRO_PRICING["output"],
+    }
+
+
+def calculate_cost_with_comparison(
+    provider_model: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+) -> Dict[str, Any]:
+    """Calculate cost for a request with GPT-5.2 Pro comparison."""
+    actual_cost = calculate_cost(provider_model, prompt_tokens, completion_tokens)
+    comparison_cost = calculate_comparison_cost(prompt_tokens, completion_tokens)
+    
+    actual_total = actual_cost["total_cost"]
+    comparison_total = comparison_cost["total_cost"]
+    
+    # Calculate savings
+    if comparison_total > 0:
+        savings_amount = comparison_total - actual_total
+        savings_percentage = (savings_amount / comparison_total) * 100
+    else:
+        savings_amount = 0.0
+        savings_percentage = 0.0
+    
+    return {
+        **actual_cost,
+        "comparison": {
+            "model": "openai/gpt-5.2-pro",
+            "total_cost": comparison_cost["total_cost"],
+            "savings_amount": round(savings_amount, 6),
+            "savings_percentage": round(savings_percentage, 2),
+        }
+    }
 

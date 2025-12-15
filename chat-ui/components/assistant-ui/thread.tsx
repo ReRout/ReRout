@@ -17,6 +17,7 @@ import {
   ErrorPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
+  useMessage,
 } from "@assistant-ui/react";
 
 import type { FC } from "react";
@@ -32,6 +33,7 @@ import {
   ComposerAttachments,
   UserMessageAttachments,
 } from "@/components/assistant-ui/attachment";
+import { CostBadge, extractMetadata } from "@/components/assistant-ui/cost-badge";
 
 import { cn } from "@/lib/utils";
 
@@ -254,12 +256,42 @@ const AssistantMessage: FC = () => {
           <MessageError />
         </div>
 
+        {/* Cost observability badge - only show when message is complete */}
+        <AssistantMessageCostBadge />
+
         <div className="aui-assistant-message-footer mt-2 ml-2 flex">
           <BranchPicker />
           <AssistantActionBar />
         </div>
       </div>
     </MessagePrimitive.Root>
+  );
+};
+
+// Separate component to handle cost badge with message content
+const AssistantMessageCostBadge: FC = () => {
+  // Get message content and status from the message context
+  const content = useMessage((state) => state.content);
+  const isRunning = useMessage((state) => state.status.type === "running");
+  
+  // Don't show while message is still being generated
+  if (isRunning) return null;
+  
+  // Find text content and extract metadata
+  const textContent = content
+    .filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+  
+  const { metadata } = extractMetadata(textContent);
+  
+  // Only show if we have metadata (message is complete with metadata marker)
+  if (!metadata) return null;
+  
+  return (
+    <div className="mx-2">
+      <CostBadge metadata={metadata} />
+    </div>
   );
 };
 
