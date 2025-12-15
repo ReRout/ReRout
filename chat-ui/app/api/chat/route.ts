@@ -1,15 +1,18 @@
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { streamText, UIMessage, convertToModelMessages } from "ai";
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
   
-  // Create provider instance with custom configuration and custom fetch to add extra_body
-  const provider = createOpenAI({
+  // Create OpenAI-compatible provider for custom backend with custom fetch to add extra_body
+  const provider = createOpenAICompatible({
+    name: "rerout",
     baseURL: "http://localhost:8084/v1",
-    apiKey: "dummy", // Not required for local backend
+    headers: {
+      "Content-Type": "application/json",
+    },
     fetch: async (url, options) => {
-      // Modify the request body to include extra_body
+      // Modify the request body to include extra_body for routing
       if (options?.body) {
         const body = JSON.parse(options.body as string);
         body.extra_body = {

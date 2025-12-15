@@ -537,15 +537,11 @@ async def chat_completions(
         # Handle streaming responses
         if body.get("stream", False):
             async def generate_stream():
-                # Send routing_explain as first chunk in streaming mode
-                if routing_explain:
-                    explain_chunk = f"data: {json.dumps({'routing_explain': routing_explain})}\n\n"
-                    yield explain_chunk
-                
+                # Stream backend response (routing_explain logged but not sent to avoid breaking SSE format)
                 async for chunk in stream_backend_chat_completions(backend, model_name, body):
                     yield chunk
             
-            logger.info({"event": "orchestrator_request", "provider_model": resolved_model, "stream": True, "source": routing_explain.get("source") if routing_explain else "manual"})
+            logger.info({"event": "orchestrator_request", "provider_model": resolved_model, "stream": True, "source": routing_explain.get("source") if routing_explain else "manual", "routing_explain": routing_explain})
             return StreamingResponse(
                 generate_stream(),
                 media_type="text/event-stream",
