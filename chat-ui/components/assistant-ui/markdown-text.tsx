@@ -15,10 +15,35 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 
+// Remark plugin to strip metadata comments from markdown (visual only)
+function remarkStripMetadata() {
+  return (tree: { children: Array<{ type: string; value?: string }> }) => {
+    const METADATA_REGEX = /<!-- REROUT_META:(.*?):REROUT_META -->/gs;
+    
+    // Walk the tree and remove metadata from text nodes
+    const walk = (node: { children?: Array<{ type: string; value?: string }> }) => {
+      if (node.children) {
+        node.children = node.children.filter((child) => {
+          if (child.type === 'html' && child.value?.includes('REROUT_META')) {
+            return false; // Remove this node
+          }
+          if (child.type === 'text' && child.value?.includes('REROUT_META')) {
+            child.value = child.value.replace(METADATA_REGEX, '').trim();
+          }
+          walk(child as { children?: Array<{ type: string; value?: string }> });
+          return true;
+        });
+      }
+    };
+    walk(tree);
+    return tree;
+  };
+}
+
 const MarkdownTextImpl = () => {
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
+      remarkPlugins={[remarkGfm, remarkStripMetadata]}
       className="aui-md"
       components={defaultComponents}
     />

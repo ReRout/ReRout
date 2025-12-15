@@ -3,7 +3,7 @@ import { streamText, UIMessage, convertToModelMessages } from "ai";
 
 export async function POST(req: Request) {
   const { messages }: { messages: UIMessage[] } = await req.json();
-  
+
   // Create OpenAI-compatible provider for custom backend with custom fetch to add extra_body
   const provider = createOpenAICompatible({
     name: "rerout",
@@ -23,7 +23,7 @@ export async function POST(req: Request) {
       return fetch(url, options);
     },
   });
-  
+
   const result = streamText({
     // Use empty model string for auto-routing - backend will route based on routing_policy
     model: provider(""),

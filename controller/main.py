@@ -15,7 +15,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from .backends import call_backend_chat_completions, stream_backend_chat_completions
 from .config import ConfigError, load_config
 from .router import parse_model, resolve_alias
-from .cost_tracker import estimate_cost_from_response
+from .cost_tracker import estimate_cost_from_response, calculate_cost_with_comparison, calculate_comparison_cost
 from .memory_manager import TokenStackMemory
 
 
@@ -537,9 +537,63 @@ async def chat_completions(
         # Handle streaming responses
         if body.get("stream", False):
             async def generate_stream():
-                # Stream backend response (routing_explain logged but not sent to avoid breaking SSE format)
+                # Track usage from streaming chunks
+                prompt_tokens = 0
+                completion_tokens = 0
+                accumulated_content = ""
+                
+                # Estimate input tokens from messages (approx 4 chars per token)
+                input_text = " ".join(m.get("content", "") for m in messages_for_api)
+                estimated_prompt_tokens = max(len(input_text) // 4, 1)
+                
+                # Stream backend response
                 async for chunk in stream_backend_chat_completions(backend, model_name, body):
                     yield chunk
+                    
+                    # Try to extract usage and content from chunk
+                    if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
+                        try:
+                            chunk_data = json.loads(chunk[6:].strip())
+                            if "usage" in chunk_data:
+                                prompt_tokens = chunk_data["usage"].get("prompt_tokens", prompt_tokens)
+                                completion_tokens = chunk_data["usage"].get("completion_tokens", completion_tokens)
+                            # Accumulate content for token estimation
+                            if "choices" in chunk_data and chunk_data["choices"]:
+                                delta = chunk_data["choices"][0].get("delta", {})
+                                if "content" in delta:
+                                    accumulated_content += delta["content"]
+                        except (json.JSONDecodeError, KeyError):
+                            pass
+                
+                # If no usage data from provider, estimate tokens
+                if prompt_tokens == 0:
+                    prompt_tokens = estimated_prompt_tokens
+                if completion_tokens == 0 and accumulated_content:
+                    # Estimate output tokens (approx 4 chars per token)
+                    completion_tokens = max(len(accumulated_content) // 4, 1)
+                
+                # Calculate cost with comparison after stream completes
+                cost_info = calculate_cost_with_comparison(resolved_model, prompt_tokens, completion_tokens)
+                
+                # Build metadata payload
+                metadata = {
+                    "model": resolved_model,
+                    "cost": {
+                        "total_cost_usd": cost_info["total_cost"],
+                        "prompt_tokens": cost_info["prompt_tokens"],
+                        "completion_tokens": cost_info["completion_tokens"],
+                    },
+                    "comparison": cost_info["comparison"],
+                }
+                if routing_explain:
+                    metadata["routing"] = {
+                        "source": routing_explain.get("source"),
+                        "chosen": routing_explain.get("chosen"),
+                    }
+                
+                # Send metadata as content in a special format that frontend can parse
+                metadata_marker = f"\n\n<!-- REROUT_META:{json.dumps(metadata)}:REROUT_META -->"
+                yield f"data: {json.dumps({'choices': [{'delta': {'content': metadata_marker}}]})}\n\n"
             
             logger.info({"event": "orchestrator_request", "provider_model": resolved_model, "stream": True, "source": routing_explain.get("source") if routing_explain else "manual", "routing_explain": routing_explain})
             return StreamingResponse(
@@ -584,23 +638,25 @@ async def chat_completions(
             except Exception as e:
                 logger.warning({"event": "memory_update_failed", "error": str(e)})
         
-        # Calculate and track cost
+        # Calculate and track cost with comparison
         cost_info: Optional[Dict[str, Any]] = None
         try:
-            cost_info = estimate_cost_from_response(result, resolved_model)
+            usage = result.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            
+            cost_info = calculate_cost_with_comparison(resolved_model, prompt_tokens, completion_tokens)
+            
             # Track metrics
             provider, model_name = parse_model(resolved_model)
             COST_COUNTER.labels(provider=provider, model=model_name).inc(cost_info["total_cost"])
             
-            usage = result.get("usage", {})
-            prompt_tokens = usage.get("prompt_tokens", 0)
-            completion_tokens = usage.get("completion_tokens", 0)
             if prompt_tokens > 0:
                 TOKEN_COUNTER.labels(type="prompt", provider=provider, model=model_name).inc(prompt_tokens)
             if completion_tokens > 0:
                 TOKEN_COUNTER.labels(type="completion", provider=provider, model=model_name).inc(completion_tokens)
             
-            # Add cost info to routing_explain
+            # Add cost info with comparison to routing_explain
             if routing_explain is not None and isinstance(routing_explain, dict):
                 routing_explain["cost"] = {
                     "total_cost_usd": cost_info["total_cost"],
@@ -609,6 +665,7 @@ async def chat_completions(
                     "input_cost_usd": cost_info["input_cost"],
                     "output_cost_usd": cost_info["output_cost"],
                 }
+                routing_explain["comparison"] = cost_info["comparison"]
         except Exception as e:
             logger.warning({"event": "cost_calculation_failed", "error": str(e), "provider_model": resolved_model})
         

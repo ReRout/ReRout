@@ -1,0 +1,109 @@
+"use client";
+
+import { useMemo } from "react";
+
+// Type for the metadata embedded in message content
+export interface ReroutMetadata {
+  model: string;
+  cost: {
+    total_cost_usd: number;
+    prompt_tokens: number;
+    completion_tokens: number;
+  };
+  comparison: {
+    model: string;
+    total_cost: number;
+    savings_amount: number;
+    savings_percentage: number;
+  };
+  routing?: {
+    source: string;
+    chosen: string;
+  };
+}
+
+// Regex to extract metadata from message content
+const METADATA_REGEX =
+  /<!-- REROUT_META:(.*?):REROUT_META -->/s;
+
+/**
+ * Extract metadata from message content and return clean content + metadata
+ */
+export function extractMetadata(content: string): {
+  cleanContent: string;
+  metadata: ReroutMetadata | null;
+} {
+  const match = content.match(METADATA_REGEX);
+  if (!match) {
+    return { cleanContent: content, metadata: null };
+  }
+
+  try {
+    const metadata = JSON.parse(match[1]) as ReroutMetadata;
+    const cleanContent = content.replace(METADATA_REGEX, "").trim();
+    return { cleanContent, metadata };
+  } catch {
+    return { cleanContent: content, metadata: null };
+  }
+}
+
+/**
+ * Format a cost value for display
+ */
+function formatCost(cost: number): string {
+  if (cost === 0) return "$0.00";
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
+/**
+ * Extract model name from provider/model format
+ */
+function getModelDisplayName(fullModel: string): string {
+  if (!fullModel) return "Unknown";
+  const parts = fullModel.split("/");
+  // Get the last part and clean it up
+  const modelName = parts[parts.length - 1] || parts[0];
+  // Remove common suffixes like :free
+  return modelName.replace(/:free$/, "").replace(/-instruct$/, "");
+}
+
+interface CostBadgeProps {
+  metadata: ReroutMetadata;
+}
+
+export function CostBadge({ metadata }: CostBadgeProps) {
+  const { model, cost, comparison } = metadata;
+
+  const displayModel = useMemo(() => getModelDisplayName(model), [model]);
+  const actualCost = formatCost(cost.total_cost_usd);
+  const comparisonCost = formatCost(comparison.total_cost);
+  const savingsPercent = comparison.savings_percentage;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      {/* Model name */}
+      <span className="font-medium text-foreground/70">{displayModel}</span>
+
+      <span className="text-muted-foreground/50">·</span>
+
+      {/* Actual cost */}
+      <span>{actualCost}</span>
+
+      <span className="text-muted-foreground/50">·</span>
+
+      {/* GPT-5.2 Pro comparison */}
+      <span className="text-muted-foreground/80">
+        vs {comparisonCost} GPT-5.2 Pro
+      </span>
+
+      {/* Savings badge */}
+      {savingsPercent > 0 && (
+        <span className="ml-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400">
+          -{savingsPercent.toFixed(0)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
