@@ -440,6 +440,22 @@ async def run_pipeline(
                 explain["pipeline"]["policy"] = decision
                 explain["chosen"] = decision.get("chosen")
                 explain["source"] = "pipeline"
+                # Add routing summary with intent and complexity for easy access
+                explain["routing_summary"] = {
+                    "intent": intent.get("label"),
+                    "intent_confidence": intent.get("confidence"),
+                    "complexity": complexity.get("level"),
+                    "complexity_confidence": complexity.get("confidence"),
+                    "model_selected": decision.get("chosen"),
+                    "rationale": decision.get("rationale"),
+                }
+                logger.info({
+                    "event": "routing_decision",
+                    "intent": intent.get("label"),
+                    "complexity": complexity.get("level"),
+                    "chosen_model": decision.get("chosen"),
+                    "source": "pipeline"
+                })
                 return explain
             except Exception as e:
                 explain["pipeline"]["policy_error"] = str(e)
@@ -450,11 +466,41 @@ async def run_pipeline(
             if chosen:
                 explain["chosen"] = chosen
                 explain["source"] = "routing_rules_fallback"
+                explain["routing_summary"] = {
+                    "intent": intent.get("label"),
+                    "intent_confidence": intent.get("confidence"),
+                    "complexity": complexity.get("level"),
+                    "complexity_confidence": complexity.get("confidence"),
+                    "model_selected": chosen,
+                    "rationale": "routing_rules_fallback (policy engine unavailable)",
+                }
+                logger.info({
+                    "event": "routing_decision",
+                    "intent": intent.get("label"),
+                    "complexity": complexity.get("level"),
+                    "chosen_model": chosen,
+                    "source": "routing_rules_fallback"
+                })
                 return explain
 
     # Final default fallback
     explain["chosen"] = "mock/gpt-4o-mini"
     explain["source"] = "default_fallback"
+    explain["routing_summary"] = {
+        "intent": intent.get("label"),
+        "intent_confidence": intent.get("confidence"),
+        "complexity": complexity.get("level"),
+        "complexity_confidence": complexity.get("confidence"),
+        "model_selected": "mock/gpt-4o-mini",
+        "rationale": "default_fallback (all routing methods failed)",
+    }
+    logger.warning({
+        "event": "routing_fallback",
+        "intent": intent.get("label"),
+        "complexity": complexity.get("level"),
+        "chosen_model": "mock/gpt-4o-mini",
+        "source": "default_fallback"
+    })
     return explain
 
 
@@ -586,9 +632,14 @@ async def chat_completions(
                     "comparison": cost_info["comparison"],
                 }
                 if routing_explain:
+                    routing_summary = routing_explain.get("routing_summary", {})
                     metadata["routing"] = {
                         "source": routing_explain.get("source"),
                         "chosen": routing_explain.get("chosen"),
+                        "intent": routing_summary.get("intent"),
+                        "intent_confidence": routing_summary.get("intent_confidence"),
+                        "complexity": routing_summary.get("complexity"),
+                        "complexity_confidence": routing_summary.get("complexity_confidence"),
                     }
                 
                 # Send metadata as content in a special format that frontend can parse

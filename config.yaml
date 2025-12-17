@@ -47,10 +47,10 @@ routing_rules:
     open_qa: openrouter/openai/gpt-oss-20b:free
 
 pipeline:
-  intent_classifier: http://intent:8000/classify
-  complexity_estimator: http://complexity:8001/classify
-  guardrails: http://guardrails:8002/check
-  policy_engine: http://policy:8003/decide
+  intent_classifier: http://localhost:8000/classify
+  complexity_estimator: http://localhost:8001/classify
+  guardrails: http://localhost:8002/check
+  policy_engine: http://localhost:8003/decide
 
 # Memory management configuration
 memory:

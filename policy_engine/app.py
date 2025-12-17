@@ -27,14 +27,15 @@ if not logger.handlers:
 REQ_COUNTER = Counter("policy_requests_total", "Total policy decide requests")
 REQ_ERRORS = Counter("policy_request_errors_total", "Policy request errors")
 LATENCY = Histogram("policy_request_latency_seconds", "Policy request latency seconds")
-REWARD_COUNTER = Counter("policy_rewards_total", "Total rewards received", ["arm"]) 
+REWARD_COUNTER = Counter("policy_rewards_total", "Total rewards received", ["arm"])
+COMPLEXITY_COUNTER = Counter("policy_complexity_total", "Requests by complexity level", ["complexity"]) 
 
 # A/B and Bandit parameters
 AB_ENABLED = os.getenv("AB_ENABLED", "false").lower() == "true"
 AB_VARIANT_PCT = float(os.getenv("AB_VARIANT_PCT", "0.1"))  # 10%
 BANDIT_EPSILON = float(os.getenv("BANDIT_EPSILON", "0.1"))  # 10% explore
 
-# Label → Display mapping (friendly keys)
+# Label → Display mapping (friendly keys) - used as fallback for medium complexity
 DEFAULT_MAP = {
     "code_generation": "qwen3-coder",
     "reasoning": "gpt-oss-20b",
@@ -56,6 +57,42 @@ NAME_TO_MODEL = {
 }
 
 DEFAULT_FALLBACK = "openrouter/minimax/minimax-m2:free"
+
+# 2D Routing Matrix: (intent, complexity) → display model name
+# This enables tiered model selection based on both task type AND difficulty
+ROUTING_MATRIX: Dict[tuple, str] = {
+    # Code generation: lightweight for simple, specialized coder for medium, largest for complex
+    ("code_generation", "low"): "gemma-3-27b-it",
+    ("code_generation", "medium"): "qwen3-coder",
+    ("code_generation", "high"): "qwen3-235b-a22b",
+    # Reasoning: lightweight for simple, reasoning-focused for medium/high
+    ("reasoning", "low"): "gemma-3-27b-it",
+    ("reasoning", "medium"): "gpt-oss-20b",
+    ("reasoning", "high"): "qwen3-235b-a22b",
+    # Summarization: lightweight for short texts, better models for longer
+    ("summarization", "low"): "gemma-3-27b-it",
+    ("summarization", "medium"): "glm-4.5-air",
+    ("summarization", "high"): "llama-3.3-70b-instruct",
+    # Brainstorming: lightweight for simple ideas, larger for creative tasks
+    ("brainstorming", "low"): "gemma-3-27b-it",
+    ("brainstorming", "medium"): "llama-3.3-70b-instruct",
+    ("brainstorming", "high"): "qwen3-235b-a22b",
+    # Open QA: lightweight for simple questions, better for complex
+    ("open_qa", "low"): "gemma-3-27b-it",
+    ("open_qa", "medium"): "gpt-oss-20b",
+    ("open_qa", "high"): "llama-3.3-70b-instruct",
+    # Chatbot: lightweight for casual, larger for complex conversations
+    ("chatbot", "low"): "gemma-3-27b-it",
+    ("chatbot", "medium"): "gemma-3-27b-it",
+    ("chatbot", "high"): "llama-3.3-70b-instruct",
+}
+
+# Fallback by complexity when intent is unknown
+COMPLEXITY_FALLBACK: Dict[str, str] = {
+    "low": "gemma-3-27b-it",
+    "medium": "gemma-3-27b-it",
+    "high": "llama-3.3-70b-instruct",
+}
 
 # Cost tiers (static sample)
 COST_TIERS: Dict[str, List[str]] = {
@@ -97,9 +134,34 @@ def resolve_display_to_model(name: str) -> str:
     return NAME_TO_MODEL.get(name, DEFAULT_FALLBACK)
 
 
-def choose_primary(label: str) -> str:
-    display = DEFAULT_MAP.get(label, "minimax-m2")
+def choose_model(intent: str, complexity: str) -> str:
+    """
+    Choose model based on 2D routing matrix (intent x complexity).
+    
+    Fallback chain:
+    1. Exact (intent, complexity) match in ROUTING_MATRIX
+    2. Intent-only match in DEFAULT_MAP (medium complexity behavior)
+    3. Complexity-only match in COMPLEXITY_FALLBACK
+    4. Default fallback model
+    """
+    key = (intent, complexity)
+    if key in ROUTING_MATRIX:
+        display = ROUTING_MATRIX[key]
+    elif intent in DEFAULT_MAP:
+        # Fall back to intent-only (medium complexity behavior)
+        display = DEFAULT_MAP[intent]
+    elif complexity in COMPLEXITY_FALLBACK:
+        # Fall back to complexity-only
+        display = COMPLEXITY_FALLBACK[complexity]
+    else:
+        # Ultimate fallback
+        display = "gemma-3-27b-it"
     return resolve_display_to_model(display)
+
+
+def choose_primary(label: str) -> str:
+    """Legacy function for backward compatibility - uses medium complexity."""
+    return choose_model(label, "medium")
 
 
 def ab_variant_choice(primary: str, alternatives: List[str]) -> Optional[str]:
@@ -134,8 +196,16 @@ async def decide(req: DecideRequest) -> DecideResponse:
     REQ_COUNTER.inc()
     start = time.perf_counter()
     try:
-        label = (req.labels or {}).get("intent", "chatbot")
-        primary = choose_primary(label)
+        # Extract both intent AND complexity from labels
+        intent = (req.labels or {}).get("intent", "chatbot")
+        complexity = (req.labels or {}).get("complexity", "medium")
+        
+        # Track complexity distribution
+        COMPLEXITY_COUNTER.labels(complexity=complexity).inc()
+        
+        # Use 2D routing matrix for model selection
+        primary = choose_model(intent, complexity)
+        
         # Alternatives are the rest of the cost tier set minus the primary
         all_candidates = COST_TIERS["medium"]
         alternatives: List[str] = [m for m in all_candidates if m != primary]
@@ -149,8 +219,15 @@ async def decide(req: DecideRequest) -> DecideResponse:
                 BANDIT_STATS[arm] = {"success": 0.0, "trials": 0.0}
         BANDIT_STATS[chosen]["trials"] += 1.0
 
-        rationale = f"label={label} primary={primary} variant={variant} chosen={chosen}"
-        logger.info({"event": "policy_decide", "label": label, "primary": primary, "variant": variant, "chosen": chosen})
+        rationale = f"intent={intent} complexity={complexity} primary={primary} variant={variant} chosen={chosen}"
+        logger.info({
+            "event": "policy_decide",
+            "intent": intent,
+            "complexity": complexity,
+            "primary": primary,
+            "variant": variant,
+            "chosen": chosen
+        })
         return DecideResponse(chosen=chosen, alternatives=alternatives, rationale=rationale, ab_variant=variant)
     except Exception as e:
         REQ_ERRORS.inc()

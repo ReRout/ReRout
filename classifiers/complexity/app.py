@@ -13,11 +13,29 @@ try:
 except Exception:
     ort = None  # Optional
 
-from dotenv import load_dotenv  # NEW
-import numpy as np  # NEW
+from dotenv import load_dotenv
+import numpy as np
+import re
+from typing import Dict
 
 # Load .env so COMPLEXITY_ONNX_PATH can be set persistently
 load_dotenv()
+
+# Technical terms that indicate complexity (domain vocabulary)
+TECHNICAL_TERMS = {
+    # Programming
+    "algorithm", "recursion", "async", "await", "callback", "closure", "decorator",
+    "inheritance", "polymorphism", "encapsulation", "abstraction", "interface",
+    "microservice", "api", "database", "sql", "nosql", "graphql", "rest",
+    "kubernetes", "docker", "ci/cd", "devops", "terraform", "aws", "gcp", "azure",
+    # Math/Science
+    "derivative", "integral", "matrix", "vector", "eigenvalue", "probability",
+    "statistics", "regression", "optimization", "gradient", "tensor", "neural",
+    "quantum", "entropy", "thermodynamics", "kinetics",
+    # Business/Technical
+    "architecture", "scalability", "latency", "throughput", "distributed",
+    "consensus", "replication", "sharding", "caching", "indexing",
+}
 
 app = FastAPI(title="RouteLLM - Complexity Estimator", version="0.1.0")
 
@@ -58,40 +76,156 @@ class ComplexityResponse(BaseModel):
     used: str
 
 
+def extract_features(text: str) -> Dict[str, float]:
+    """
+    Extract semantic features from text for complexity classification.
+    
+    Features:
+    - length_score: Normalized text length (0-1)
+    - question_depth: Analytical complexity based on question patterns
+    - has_code: Code patterns detected (0 or 1)
+    - has_math: Mathematical notation detected (0 or 1)
+    - nested_requirements: Multi-step task indicators
+    - technical_density: Ratio of technical terms in text
+    """
+    t = text or ""
+    t_lower = t.lower()
+    length = len(t)
+    words = t_lower.split()
+    word_count = max(len(words), 1)
+    
+    # Length score: normalized to 0-1, caps at 500 chars
+    length_score = min(length / 500.0, 1.0)
+    
+    # Question depth: analytical terms that suggest complex reasoning
+    analytical_patterns = [
+        r'\bexplain\b', r'\banalyze\b', r'\bcompare\b', r'\bcontrast\b',
+        r'\bevaluate\b', r'\bprove\b', r'\bderive\b', r'\bjustify\b',
+        r'\bcritique\b', r'\bsynthesiz', r'\bimplement\b', r'\bdesign\b',
+        r'\boptimize\b', r'\bdebug\b', r'\brefactor\b', r'\barchitect\b',
+    ]
+    question_count = t.count("?")
+    analytical_matches = sum(1 for p in analytical_patterns if re.search(p, t_lower))
+    question_depth = min((question_count + analytical_matches * 2) / 5.0, 1.0)
+    
+    # Code detection: broader pattern matching
+    code_patterns = [
+        r'```',                              # Code blocks
+        r'\bdef\s+\w+\s*\(',                 # Python functions
+        r'\bclass\s+\w+',                    # Class definitions
+        r'\bfunction\s+\w+\s*\(',            # JS functions
+        r'\bconst\s+\w+\s*=',                # JS const
+        r'\blet\s+\w+\s*=',                  # JS let
+        r'\bvar\s+\w+\s*=',                  # JS var
+        r'\bimport\s+[\w{]',                 # Import statements
+        r'\bfrom\s+\w+\s+import\b',          # Python imports
+        r'\breturn\s+',                      # Return statements
+        r'=>',                               # Arrow functions
+        r'\bif\s*\(.+\)\s*{',                # If statements with braces
+        r'\bfor\s*\(.+\)\s*{',               # For loops
+        r'\bwhile\s*\(.+\)',                 # While loops
+        r'SELECT\s+.+\s+FROM',               # SQL
+        r'CREATE\s+TABLE',                   # SQL DDL
+    ]
+    has_code = 1.0 if any(re.search(p, t, re.IGNORECASE) for p in code_patterns) else 0.0
+    
+    # Math detection: formulas and mathematical notation
+    math_patterns = [
+        r'[∫∑∏√∞≤≥≠±×÷∈∉∅∀∃∧∨¬⊂⊃∪∩]',       # Math symbols
+        r'\\frac\{',                         # LaTeX fractions
+        r'\\int\b',                          # LaTeX integrals
+        r'\\sum\b',                          # LaTeX sums
+        r'\\sqrt\{',                         # LaTeX square root
+        r'\bequation\b',                     # Equation mention
+        r'\bformula\b',                      # Formula mention
+        r'\bderivative\b',                   # Calculus
+        r'\bintegral\b',                     # Calculus
+        r'\bmatrix\b',                       # Linear algebra
+        r'\bvector\b',                       # Linear algebra
+        r'\beigenvalue\b',                   # Linear algebra
+        r'\bprobability\b',                  # Statistics
+        r'\^{?\d+}?',                        # Exponents like x^2 or x^{2}
+        r'_\{?\d+\}?',                       # Subscripts
+        r'\d+\s*[+\-*/]\s*\d+\s*=',          # Arithmetic equations
+    ]
+    has_math = 1.0 if any(re.search(p, t) for p in math_patterns) else 0.0
+    
+    # Nested requirements: conjunctions indicating multi-step tasks
+    nested_patterns = [
+        r'\band\s+then\b',
+        r'\bfirst\b.*\bthen\b',
+        r'\bstep\s*\d',
+        r'\b(?:also|additionally|furthermore|moreover)\b',
+        r'\bbefore\b.*\bafter\b',
+        r'\brequir(?:e|es|ing)\b.*\band\b',
+    ]
+    conjunction_count = t_lower.count(" and ") + t_lower.count(" or ") + t_lower.count(", then ")
+    nested_pattern_matches = sum(1 for p in nested_patterns if re.search(p, t_lower))
+    nested_requirements = min((conjunction_count + nested_pattern_matches * 2) / 6.0, 1.0)
+    
+    # Technical term density
+    technical_count = sum(1 for word in words if word.strip(".,!?;:()[]{}") in TECHNICAL_TERMS)
+    technical_density = min(technical_count / max(word_count, 1) * 10, 1.0)  # Scale up for visibility
+    
+    return {
+        "length_score": length_score,
+        "question_depth": question_depth,
+        "has_code": has_code,
+        "has_math": has_math,
+        "nested_requirements": nested_requirements,
+        "technical_density": technical_density,
+    }
+
+
 def classify_heuristic(text: str) -> ComplexityResponse:
-    """Heuristic complexity classification based on text length and structure."""
-    length = len(text or "")
+    """
+    Semantic complexity classification using weighted feature scoring.
     
-    # Count sentences, questions, code blocks, etc. for better heuristics
-    sentence_count = (text or "").count(".") + (text or "").count("!") + (text or "").count("?")
-    has_code = "```" in (text or "") or "def " in (text or "") or "class " in (text or "")
-    has_questions = "?" in (text or "") or "how" in (text or "").lower() or "why" in (text or "").lower()
+    This replaces the pure length-based heuristic with a multi-dimensional
+    analysis of text complexity including code patterns, math notation,
+    analytical language, and technical vocabulary.
+    """
+    features = extract_features(text)
     
-    # More nuanced classification
-    if length < 100:
+    # Weighted scoring formula
+    # Weights sum to 1.0 for interpretability
+    score = (
+        features["length_score"] * 0.20 +           # Text length (reduced weight)
+        features["question_depth"] * 0.25 +         # Analytical complexity
+        features["has_code"] * 0.20 +               # Code presence
+        features["has_math"] * 0.15 +               # Math presence
+        features["nested_requirements"] * 0.10 +    # Multi-step tasks
+        features["technical_density"] * 0.10        # Technical vocabulary
+    )
+    
+    # Classify based on score thresholds
+    if score < 0.25:
         level = "low"
-        confidence = 0.8
-    elif length < 300:
-        # Medium length: check for complexity indicators
-        if has_code or sentence_count > 3:
-            level = "medium"
-            confidence = 0.75
-        else:
-            level = "low"
-            confidence = 0.7
-    elif length < 800:
+        # Confidence is higher when score is clearly in the low range
+        confidence = 0.7 + (0.25 - score) * 0.4  # 0.7-0.8
+    elif score < 0.55:
         level = "medium"
-        confidence = 0.75
+        # Confidence peaks in middle of medium range
+        distance_from_center = abs(score - 0.4)
+        confidence = 0.75 - distance_from_center * 0.3  # ~0.65-0.75
     else:
         level = "high"
-        confidence = 0.8
+        # Confidence increases with score for high complexity
+        confidence = 0.7 + min(score - 0.55, 0.2) * 0.5  # 0.7-0.8
     
-    # Boost complexity for code or structured content
-    if has_code and length > 200:
-        level = "high"
-        confidence = 0.85
+    # Clamp confidence
+    confidence = max(0.5, min(0.9, confidence))
     
-    return ComplexityResponse(level=level, confidence=confidence, used="heuristic")
+    # Log features for debugging
+    logger.debug({
+        "event": "complexity_features",
+        "features": features,
+        "score": round(score, 3),
+        "level": level,
+        "confidence": round(confidence, 3)
+    })
+    
+    return ComplexityResponse(level=level, confidence=round(confidence, 2), used="heuristic")
 
 
 def classify_onnx(text: str) -> ComplexityResponse | None:

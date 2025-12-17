@@ -103,10 +103,16 @@ async def stream_backend_chat_completions(
     if backend.get("require_api_key", True):
         api_key_env = backend.get("api_key_env")
         if not api_key_env:
-            raise RuntimeError("Backend requires API key but 'api_key_env' not set")
+            error_msg = "Backend requires API key but 'api_key_env' not set"
+            yield f"data: {json.dumps({'error': {'message': error_msg, 'type': 'configuration_error'}})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
         api_key = os.getenv(api_key_env)
         if not api_key:
-            raise RuntimeError(f"Environment variable {api_key_env} is not set")
+            error_msg = f"Environment variable {api_key_env} is not set"
+            yield f"data: {json.dumps({'error': {'message': error_msg, 'type': 'configuration_error'}})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
         headers["Authorization"] = f"Bearer {api_key}"
 
     # Remove unsupported params if defined
@@ -120,20 +126,60 @@ async def stream_backend_chat_completions(
         headers.setdefault("HTTP-Referer", os.getenv("HTTP_REFERER", "http://localhost:8084"))
         headers.setdefault("X-Title", os.getenv("X_TITLE", "RouteLLM"))
     
-    # Retry logic for streaming
+    # Retry logic for streaming with graceful error handling
     max_attempts = 3
+    last_error = None
     for attempt in range(max_attempts):
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 async with client.stream("POST", url, json=filtered, headers=headers) as response:
-                    response.raise_for_status()
+                    # Check for HTTP errors before streaming
+                    if response.status_code >= 400:
+                        error_body = await response.aread()
+                        try:
+                            error_json = json.loads(error_body)
+                            error_msg = error_json.get("error", {}).get("message", str(error_body))
+                        except (json.JSONDecodeError, AttributeError):
+                            error_msg = error_body.decode("utf-8", errors="replace")
+                        
+                        # Handle rate limiting specifically
+                        if response.status_code == 429:
+                            if attempt < max_attempts - 1:
+                                wait_time = min(2 ** (attempt + 1), 10)
+                                await asyncio.sleep(wait_time)
+                                continue
+                            error_msg = f"Rate limited by {backend.get('name', 'provider')}. Please wait a moment and try again. ({error_msg})"
+                        
+                        # Yield error as SSE message with content so frontend displays it
+                        error_content = f"⚠️ **Error from {backend.get('name', 'provider')}**: {error_msg}"
+                        yield f"data: {json.dumps({'choices': [{'delta': {'content': error_content}}]})}\n\n"
+                        yield "data: [DONE]\n\n"
+                        return
+                    
                     async for chunk in response.aiter_text():
                         if chunk:
                             yield chunk
                     return  # Success, exit retry loop
-        except (httpx.HTTPStatusError, httpx.RequestError, httpx.TimeoutException) as e:
-            if attempt == max_attempts - 1:
-                raise  # Last attempt, re-raise
-            wait_time = min(2 ** attempt, 10)  # Exponential backoff, max 10s
-            await asyncio.sleep(wait_time)
-            continue
+        except httpx.TimeoutException as e:
+            last_error = f"Request timed out after 120 seconds"
+            if attempt < max_attempts - 1:
+                wait_time = min(2 ** attempt, 10)
+                await asyncio.sleep(wait_time)
+                continue
+        except httpx.RequestError as e:
+            last_error = f"Network error: {str(e)}"
+            if attempt < max_attempts - 1:
+                wait_time = min(2 ** attempt, 10)
+                await asyncio.sleep(wait_time)
+                continue
+        except Exception as e:
+            last_error = str(e)
+            if attempt < max_attempts - 1:
+                wait_time = min(2 ** attempt, 10)
+                await asyncio.sleep(wait_time)
+                continue
+    
+    # All retries exhausted - yield error as content
+    error_content = f"⚠️ **Error**: {last_error or 'Unknown error occurred'}"
+    yield f"data: {json.dumps({'choices': [{'delta': {'content': error_content}}]})}\n\n"
+    yield "data: [DONE]\n\n"
