@@ -19,6 +19,10 @@ export interface ReroutMetadata {
   routing?: {
     source: string;
     chosen: string;
+    intent?: string;
+    intent_confidence?: number;
+    complexity?: string;
+    complexity_confidence?: number;
   };
 }
 
@@ -68,17 +72,66 @@ function getModelDisplayName(fullModel: string): string {
   return modelName.replace(/:free$/, "").replace(/-instruct$/, "");
 }
 
+/**
+ * Get complexity badge styling based on level
+ */
+function getComplexityStyle(complexity: string): { bg: string; text: string; label: string } {
+  switch (complexity?.toLowerCase()) {
+    case "low":
+      return {
+        bg: "bg-blue-500/10 dark:bg-blue-500/20",
+        text: "text-blue-600 dark:text-blue-400",
+        label: "Simple",
+      };
+    case "medium":
+      return {
+        bg: "bg-amber-500/10 dark:bg-amber-500/20",
+        text: "text-amber-600 dark:text-amber-400",
+        label: "Medium",
+      };
+    case "high":
+      return {
+        bg: "bg-rose-500/10 dark:bg-rose-500/20",
+        text: "text-rose-600 dark:text-rose-400",
+        label: "Complex",
+      };
+    default:
+      return {
+        bg: "bg-gray-500/10 dark:bg-gray-500/20",
+        text: "text-gray-600 dark:text-gray-400",
+        label: complexity || "Unknown",
+      };
+  }
+}
+
+/**
+ * Format intent for display
+ */
+function formatIntent(intent: string): string {
+  if (!intent) return "";
+  return intent
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 interface CostBadgeProps {
   metadata: ReroutMetadata;
 }
 
 export function CostBadge({ metadata }: CostBadgeProps) {
-  const { model, cost, comparison } = metadata;
+  const { model, cost, comparison, routing } = metadata;
 
   const displayModel = useMemo(() => getModelDisplayName(model), [model]);
   const actualCost = formatCost(cost.total_cost_usd);
   const comparisonCost = formatCost(comparison.total_cost);
   const savingsPercent = comparison.savings_percentage;
+
+  const complexity = routing?.complexity;
+  const intent = routing?.intent;
+  const complexityStyle = useMemo(
+    () => (complexity ? getComplexityStyle(complexity) : null),
+    [complexity]
+  );
 
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -89,6 +142,32 @@ export function CostBadge({ metadata }: CostBadgeProps) {
 
       {/* Actual cost */}
       <span>{actualCost}</span>
+
+      {/* Complexity badge */}
+      {complexityStyle && (
+        <>
+          <span className="text-muted-foreground/50">·</span>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${complexityStyle.bg} ${complexityStyle.text}`}
+            title={`Complexity: ${complexity}${routing?.complexity_confidence ? ` (${(routing.complexity_confidence * 100).toFixed(0)}% confidence)` : ""}`}
+          >
+            {complexityStyle.label}
+          </span>
+        </>
+      )}
+
+      {/* Intent */}
+      {intent && (
+        <>
+          <span className="text-muted-foreground/50">·</span>
+          <span
+            className="text-muted-foreground/80"
+            title={`Intent: ${intent}${routing?.intent_confidence ? ` (${(routing.intent_confidence * 100).toFixed(0)}% confidence)` : ""}`}
+          >
+            {formatIntent(intent)}
+          </span>
+        </>
+      )}
 
       <span className="text-muted-foreground/50">·</span>
 
